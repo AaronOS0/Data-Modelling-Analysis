@@ -1,0 +1,591 @@
+---
+title: 'Data Modelling and Analysis'
+subtitle: 'Coursework: 2020/2021' 
+author: '20299113'
+classoption: twoside
+output:
+  pdf_document:
+    toc: no
+    fig_caption: yes
+    number_sections: true
+  html_notebook:
+    toc: no
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes: 
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[CE,CO]{}
+- \fancyhead[LE,LO]{\textit{20299113}}
+- \fancyhead[RE,RO]{\nouppercase{\textit{\leftmark}}}
+- \usepackage{xcolor}
+- \usepackage{framed}
+- \colorlet{shadecolor}{gray!10}
+---
+# 1. ANALYSIS AND PRE-PROCESSING
+## 1. Explore the data
+### 1. Provide a table for all the input features of the dataset including measures of centrality, 
+dispersion, and how many missing values each attribute has.
+```{r}
+# Read data
+data = read.csv('cw_data.csv')
+```
+
+```{r}
+# Load required packages
+library("dplyr")
+library("ggplot2")
+library("gridExtra")
+library("knitr")
+library("cluster.datasets")
+library("cluster")
+library("e1071")
+library("fpc")
+library("xlsx")
+```
+
+```{r}
+# Get feature column
+features = select(data, -class)
+# Get Mean, Median, Mode, standard deviation, interquartile range ,range, Missing value number
+statistics_res = sapply(features, function(x) c(mean(x, na.rm=TRUE), 
+                                              median(x, na.rm=TRUE), 
+                                              names(which.max(table(x))), 
+                                              sd(x, na.rm=TRUE), 
+                                              IQR(x, na.rm=TRUE),  
+                                              max(x, na.rm=TRUE)-min(x, na.rm=TRUE), 
+                                              sum(is.na(x))))
+# Transform to r dataframe to store
+statistics_res_df = as.data.frame(statistics_res, 
+                        row.names = c("Mean", "Median", "Mode", "SD", "IQR", "Range", "Missing"))
+statistics_res_df = as.data.frame(t(statistics_res_df))
+# Save to Excel for report
+#write.xlsx(statistics_res_df, "statistics_res.xls", sheetName = "statistics_res", append = TRUE)
+statistics_res_df
+```
+
+### 2. Analyse the class variable using appropriate statistics and visualisations
+The class variable is Nominal data. 
+Therefore, I chose bar plot to show the count of each object class. 
+The appropriate statistics should be mode. The appropriate statistics should be mode. 
+The most frequently class is GALAXY.
+```{r}
+names(which.max(table(data$class)))
+# Count the number of each class
+count_class = group_by(data, class) %>% count
+ggplot(data = count_class, aes(x = class, y = n))+
+  geom_bar(stat = 'identity', width = 0.5)+
+  theme_light()+
+  ggtitle("Number of each object class")+   
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 16))+
+  geom_text(aes(label = n, vjust = -0.4, hjust = 0.5))+
+  labs(x = "object class", y = "Number")
+```
+
+### 3. Produce histograms for each input attribute. 
+Firstly, I used par function to set grid for graphs as 3 rows and 4 columns in a page. 
+Then, I used sapply with hist function to draw all the graphs once.
+```{r}
+par(mfrow = c(3, 4))
+sapply(names(features), function(columns) 
+  hist(features[[columns]], main = paste("Histogram of" , columns), xlab = columns))
+```
+
+## 2. Explore the relationships between the attributes, and between the class and the attributes 
+### 1. Calculate the correlation and produce a scatterplot for the variables:r and g. 
+What does this correlation tell you about the relationships between these variables?
+High positive correlation
+```{r}
+# Calculate pearson correlation, then plot
+cor_value = cor(features$r, features$g, use="complete.obs")
+plot(features$r, features$g, xlab="r", ylab="g",
+     main="correlation r vs g", sub = paste("correlation:", cor_value))
+```
+
+### 2. Calculate the correlation and produce a scatterplot for the variables:mjd and r. 
+What does thiscorrelation tell you about the relationships between these variables?
+No correlation
+```{r}
+# Calculate pearson correlation, then plot
+cor_value = cor(features$mjd, features$r, use="complete.obs")
+plot(features$mjd, features$r, xlab="mjd", ylab="r",
+     main="correlation mjd vs r", sub = paste("correlation:", cor_value))
+```
+
+### 3. Produce scatter plots between the class variable and u,z, and redshift.
+What do these three scatterplots tell you about the relationships between these variables and the class?
+No correlation. The range of redshift on object class are quite different(skewed)
+```{r}
+p_u = ggplot(data, aes(x = class, y=u)) + 
+      geom_point() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12)) +
+      ggtitle("object class Vs u") +
+      labs(x = "object class", y = "u")
+
+p_z = ggplot(data, aes(x = class, y=z)) + 
+      geom_point() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12)) +
+      ggtitle("object class Vs z") +
+      labs(x = "object class", y = "z")
+
+p_redshift = ggplot(data, aes(x = class, y=redshift)) + 
+      geom_point() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12)) +
+      ggtitle("object class Vs redshift") +
+      labs(x = "object class", y = "redshift")
+grid.arrange(p_u, p_z, p_redshift, nrow=1, ncol=3)
+```
+
+### 4. Produce boxplots for all of the appropriate attributes.
+I chose appropriate attributes for boxplots based on 
+whether the standard deviation of that feature is meaningful. 
+If the standard deviation is 0 or N/A, there is no need to draw a boxplot.
+```{r}
+appropriate_attr = c("dia", "ra", "dec", "u", "g", "r", "i",
+                     "z", "run", "m_unt", "flux", "redshift", "plate", "mjd")
+
+p_lst = list()
+i = 1
+for(attri in appropriate_attr){
+  p_lst[[i]] = ggplot(data, aes_string(y = attri, fill = "class")) + 
+             geom_boxplot() +
+             ggtitle(paste(attri, "boxplot"))+
+             labs(x = attri, y = "Value")
+  i = i + 1
+}
+
+grid.arrange(grobs = p_lst[1:9], ncol = 3)
+```
+
+```{r}
+# The remaining box plot
+grid.arrange(grobs = p_lst[10:14], ncol = 2)
+```
+
+## 3. General Conclusions
+```{r}
+# Missing value by class of dia
+aggregate(dia ~ class, data=data, function(x) {sum(is.na(x))}, na.action = NULL)
+```
+
+## 4. Dealing with missing values in R
+```{r}
+# Description: Missing data imputation
+# Args:
+#		df: R dataframe 
+#		criteria: Imputation criteria. group mean/ group media/ 0
+# Return:
+#		new_df: New R dataframe after data imputation
+imputeData = function(df, criteria){
+  if (criteria == "mean"){
+    new_df = as.data.frame(mutate_at(group_by(df, class), 
+                                     vars(-group_cols()), 
+                                     funs(ifelse(is.na(.), 
+                                     mean(., na.rm = TRUE),.))))
+  }else if (criteria == "median"){
+    new_df = as.data.frame(mutate_at(group_by(df, class), 
+                                     vars(-group_cols()), 
+                                     funs(ifelse(is.na(.), 
+                                     median(., na.rm = TRUE),.))))
+  }else if (criteria == 0){
+    imputation = function(attri) replace(attri, is.na(attri), 0)
+    new_df = replace(df, TRUE, lapply(df, imputation))
+  }
+  return(new_df)
+}
+```
+```{r}
+# Replacement with 0, group mean and group median
+data_0 = imputeData(data, 0)
+data_mean = imputeData(data, "mean")
+data_median = imputeData(data, "median")
+```
+
+```{r}
+# Descriptive statistics to show the influence of different Imputation method.
+dia_origin =data$dia
+dia0 =data_0$dia
+dia_mean =data_mean$dia
+dia_median =data_median$dia
+dia_data = data.frame(dia_origin, dia0, dia_mean, dia_median)
+dia_data_metric = sapply(dia_data, function(x) c(mean(x, na.rm=TRUE), 
+                                                 median(x, na.rm=TRUE), 
+                                                 names(which.max(table(x))), 
+                                                 sd(x, na.rm=TRUE), 
+                                                 IQR(x, na.rm=TRUE),  
+                                                 max(x, na.rm=TRUE)-min(x, na.rm=TRUE), 
+                                                 sum(is.na(x))))
+dia_data_df = as.data.frame(dia_data_metric, 
+                     row.names = c("Mean", "Median", "SD", "IQR", "Range", "Missing"))
+dia_data_df = as.data.frame(t(dia_data_df))
+dia_data_df
+```
+
+## 5. Attribute transformation
+Using the three datasets generated in 1.4, explore the use of three transformation techniques (mean centering, normalisation and standardisation) to scale the attributes. Define, compare and contrast these approaches, and explain their effects on the data.
+mean centering, normalisation and standardisation
+
+```{r}
+# mean centering
+data_0_mc = mutate_if(data_0, is.numeric, function(x) scale(x, scale = FALSE))
+data_mean_mc = mutate_if(data_mean, is.numeric, function(x) scale(x, scale = FALSE))
+data_median_mc = mutate_if(data_median, is.numeric, function(x) scale(x, scale = FALSE))
+```
+
+```{r}
+# normalisation (x - min(x)) / (max(x) - min(x))
+features_0_nor = as.data.frame(lapply(select(data_0, -class), 
+function(attri) (attri - min(attri, na.rm = TRUE)) / (max(attri, na.rm = TRUE) - min(attri, na.rm = TRUE))))
+data_0_nor = cbind(features_0_nor, select(data_0, class))
+
+features_mean_nor = as.data.frame(lapply(select(data_mean, -class),
+function(attri) (attri - min(attri, na.rm = TRUE)) / (max(attri, na.rm = TRUE) - min(attri, na.rm = TRUE))))
+data_mean_nor = cbind(features_mean_nor, select(data_mean, class))
+
+features_median_nor = as.data.frame(lapply(select(data_median, -class), 
+function(attri) (attri - min(attri, na.rm = TRUE)) / (max(attri, na.rm = TRUE) - min(attri, na.rm = TRUE))))
+data_median_nor = cbind(features_median_nor, select(data_median, class))
+```
+
+```{r}
+# standardisation (x - mean(x)) / sd(x)
+data_0_sd = mutate_if(data_0, is.numeric, scale)
+data_mean_sd = mutate_if(data_mean, is.numeric, scale)
+data_median_sd = mutate_if(data_median, is.numeric, scale)
+```
+
+```{r}
+# Descriptive statistics to show the influence of different scaling method.
+ra_origin =data_mean$ra
+ra_mc =data_mean_mc$ra
+ra_nor =data_mean_nor$ra
+ra_sd =data_mean_sd$ra
+ra_data = data.frame(ra_origin, ra_mc, ra_nor, ra_sd)
+ra_data_metric = sapply(ra_data, function(x) c(mean(x, na.rm=TRUE), 
+                                               median(x, na.rm=TRUE), 
+                                               sd(x, na.rm=TRUE), 
+                                               IQR(x, na.rm=TRUE), 
+                                               max(x, na.rm=TRUE)-min(x, na.rm=TRUE)))
+ra_data_df = as.data.frame(ra_data_metric, 
+                           row.names = c("Mean", "Median", "SD", "IQR", "Range"))
+ra_data_df = as.data.frame(t(ra_data_df))
+ra_data_df
+```
+
+## 6. Attribute / instance selection
+### 1.  consider attribute and instance deletion strategies to deal with missing and duplicated values.
+```{r}
+## Attribute deletion
+# drop the attribute with over 50% NaN
+missing_prop = colMeans(is.na(data))
+missing_attri = missing_prop[missing_prop > 0.5]
+missing_attri_name = names(missing_attri)
+data_del = select(data, -missing_attri_name)
+## instance deletion
+# drop all missing value
+data_del = na.omit(data_del)
+# drop all duplicated instances
+data_del = unique(data_del)
+# drop all duplicated columns
+col_duplicated = sapply(data_del, function(x) length(unique(x)))
+col_duplicated_name = names(col_duplicated[col_duplicated == 1])
+data_del = select(data_del, -all_of(col_duplicated_name))
+```
+
+### 2. Use correlations between attributes to reduce the number of attributes. 
+```{r}
+# Drop the attribute with >50% Missing value
+data_cor = select(data, -c("dia"))
+# drop all missing value
+data_cor = na.omit(data_cor)
+```
+
+```{r}
+# Pearson correlation 
+# Ignore the ordinal, nominal and class attributes
+cor_abs = abs(cor(select(data_cor, -c("camcol", "objid", "rerun",
+                                      "native", "field", "specobjid", 
+                                      "fiberid", "class")))) > 0.95
+cor_abs_df = as.data.frame(cor_abs)
+cor_abs_df = replace(cor_abs_df, cor_abs_df == FALSE, 0)
+cor_abs_df
+
+high_cor = c("r","z","flux","plate")
+data_cor = select(data_cor, -all_of(high_cor))
+# 17 features left
+```
+
+## 7. Attribute transformation / reduction
+Use Principal Component Analysis. Explain your process, along with the results obtained.
+Appropriate pre-processing steps: no missing values, no objid/rerun- duplicated value.
+```{r}
+# drop the attribute with over 50% NaN and all same value
+data_pca = select(data, -c("objid", "dia", "rerun"))
+# drop all missing value
+data_pca = na.omit(data_pca)
+# drop all duplicated value
+data_pca = unique(data_pca)
+```
+
+### 1.Reduced to 12 dimensions (i.e: PC1-PC12).
+```{r}
+data_stand = as.data.frame(scale(select(data_pca, -class)))
+pca = prcomp(data_stand, scale=T)
+pca_info = summary(pca)
+data_pca12 = pca$x[,1:12]
+data_pca12 = cbind(data_pca12, select(data_pca, class))
+data_pca_all = cbind(pca$x, select(data_pca, class))
+```
+
+```{r}
+pca_info
+```
+
+```{r}
+# Show the pearson of the data after PCA
+pca_cor = abs(cor(pca_info$x)) > 0.1
+pca_cor_df = as.data.frame(pca_cor)
+pca_cor_df = replace(pca_cor_df, pca_cor_df == FALSE, 0)
+pca_cor_df
+```
+
+### 2. How many PCs should be used to obtain a cumulative variance of at least 90%?
+```{r}
+# Description: Automatically chose dimensions by variance threshold
+# Args:
+#		data: The data without labels
+#		thres: The setting variance threshold
+# Return:
+#		chosen_pca: The chosen dimensions pca
+auto_pca = function(data, thres){
+  data_stand = as.data.frame(scale(data))
+  data_pca = prcomp(data_stand, scale=T)
+  pca_info = summary(data_pca)
+  cumulative_proportion = tail(pca_info$importance,1)
+  whole_len = length(cumulative_proportion)
+  len = sum(cumulative_proportion < thres) + 1
+  len = ifelse(len > whole_len, whole_len, len)
+  chosen_pca = data_pca$x[,1:len]
+  return (chosen_pca)
+}
+```
+```{r}
+# 90% cumulative variance
+data_pca90p = auto_pca(select(data_pca, -class), 0.9)
+data_pca90p = cbind(data_pca90p, select(data_pca, class))
+```
+
+
+###17 Dataset from Part 1
+```{r}
+# imputation with 0/mean/Median
+dim(data_0)
+dim(data_mean)
+dim(data_median)
+# mean center scale 
+dim(data_0_mc)
+dim(data_mean_mc)
+dim(data_median_mc)
+# normalisation 
+dim(data_0_nor)
+dim(data_mean_nor)
+dim(data_median_nor)
+# standardisation
+dim(data_0_sd)
+dim(data_mean_sd)
+dim(data_median_sd)
+# deletion Missing and duplicated attributes
+dim(data_del)
+# Drop high correlation attributes and Missing value
+dim(data_cor)
+# PCA
+dim(data_pca_all)
+dim(data_pca12)
+dim(data_pca90p)
+```
+
+```{r}
+## Write all the datasets to csv
+# imputation with 0/mean/Median
+write.csv(data_0, "data_0.csv", row.names = FALSE)
+write.csv(data_mean, "data_mean.csv", row.names = FALSE)
+write.csv(data_median, "data_median.csv", row.names = FALSE)
+# mean center scale 
+write.csv(data_0_mc, "data_0_mc.csv", row.names = FALSE)
+write.csv(data_mean_mc, "data_mean_mc.csv", row.names = FALSE)
+write.csv(data_median_mc, "data_median_mc.csv", row.names = FALSE)
+# normalisation 
+write.csv(data_0_nor, "data_0_nor.csv", row.names = FALSE)
+write.csv(data_mean_nor, "data_mean_nor.csv", row.names = FALSE)
+write.csv(data_median_nor, "data_median_nor.csv", row.names = FALSE)
+# standardisation
+write.csv(data_0_sd, "data_0_sd.csv", row.names = FALSE)
+write.csv(data_mean_sd, "data_mean_sd.csv", row.names = FALSE)
+write.csv(data_median_sd, "data_median_sd.csv", row.names = FALSE)
+# deletion Missing and duplicated attributes
+write.csv(data_del, "data_del.csv", row.names = FALSE)
+# Drop high correlation attributes and Missing value
+write.csv(data_cor, "data_cor.csv", row.names = FALSE)
+# PCA
+write.csv(data_pca_all, "data_pca_all.csv", row.names = FALSE)
+write.csv(data_pca12, "data_pca12.csv", row.names = FALSE)
+write.csv(data_pca90p, "data_pca90p.csv", row.names = FALSE)
+```
+
+# 2. CLUSTERING
+```{r}
+# Description: calculate the results of different clustering algorithm
+# Args:
+#		data_all: R dataframe read from the dataset
+#   distance_method: different different method.("euclidean" and "manhattan"). For hca and pam algorithm.
+#   cut_tree: The heights where the tree should be cut. For hca algorithm.
+#   random_sets: The number of chosen random sets. For kmeans and pam algorithm.
+#   iterations: the maximum number of iterations allowed. For kmeans algorithm.
+# Return:
+#		results: The aggregate results after clustering
+clusterCalculator = function(data_all, distance_method, cut_tree, random_sets, iterations){
+    
+    # Only use features
+    data_clus = select(data_all, -class)
+    results = data.frame(class = select(data_all, class), hca=0, kmeans = 0, pam = 0)
+    ## 3 groups
+    k = 3
+    
+    ## HCA
+    hca_res = hclust(dist(data_clus, method = distance_method))
+    results$hca = cutree(hca_res, k, h = cut_tree)
+    ## K-means
+    km_res = kmeans(data_clus, k, iter.max = iterations, nstart = random_sets)
+    results$kmeans = km_res$cluster
+    ## PAM
+    pam_res = pam(data_clus, k, metric = distance_method, nstart = random_sets)
+    results$pam = pam_res$clustering
+    return(results)
+}
+```
+
+```{r}
+# Description: Return max diag matrix
+# Args:
+#		matr: confusion matrix
+# Return:
+#		max_matr: aligned matrix
+maxDiag = function(matr){
+  diagMax = -Inf
+  col_num = dim(matr)[2]
+  # Try all the combinations
+  for(i in 1: nrow(permutations(col_num))){
+    new_matr = matr[,c(permutations(col_num)[i,])]
+    dig_sum = sum(diag(new_matr))
+    if(dig_sum > diagMax){
+      diagMax = dig_sum
+      max_matr = new_matr
+    }
+  }
+return(max_matr)
+}
+```
+
+```{r}
+## External Metrics
+# Description: calculate External metrics from aligned matrix
+# Args:
+#		matr: confusion matrix
+#   model_name: the name of models. str type
+# Return:
+#		results: External metrics from aligned matrix
+metricCal = function(matr){
+  diag_value = diag(matr)
+  len = length(diag_value)
+  accuracy = sum(diag_value) / sum(matr)
+  
+  recall = sapply(c(1:len), function(x) diag_value[x] / sum(matr[x,]))
+  precision = sapply(c(1:len), function(x) diag_value[x] / sum(matr[,x]))
+  f1_score = sapply(c(1:len), function(x)  2 * recall[x] * precision[x] / (recall[x] + precision[x]))
+  results = cbind(matr, recall, precision, f1_score)
+  
+  results = rbind(results, Average = c(NA, NA, NA, mean(recall), mean(precision), mean(f1_score)))
+  results = cbind(results, accuracy= c(NA, NA, NA, accuracy))
+  return(results)
+}
+```
+
+### 2. parameters tuning
+```{r}
+### Dataset
+## Self-chosen
+#dataset = "data_median_nor.csv"
+
+## PCA - i&ii
+#dataset = "data_pca_all.csv"
+#dataset = "data_pca12.csv"
+
+## Deletion Missing and duplicated attributes - iii
+#dataset = "data_del.csv"
+
+## Drop high correlation attributes and Missing value -iii
+#dataset = "data_cor.csv"
+
+## Mean center scale - iV
+#dataset = "data_0_mc.csv"
+#dataset = "data_mean_mc.csv"
+dataset = "data_median_mc.csv"
+
+
+# Parameters 
+distance_method = "euclidean" # "euclidean" and "manhattan". For hca and pam algorithm.
+cut_tree = 10 # 10,50,100. For hca algorithm.
+random_sets = 3 # 1,3,5. For kmeans and pam algorithm.
+iterations = 50 # 10,50,100. For kmeans algorithm.
+
+# Export Excel name
+inter_excel_name = "internal_metrics_df16.xls"
+ext_excel_name = "all_ext_metric_df16.xls"
+
+data_all = read.csv(dataset)
+# Get column with all Nan
+nan_col = sapply(data_all, function(x) all(is.na(x)))
+
+cluster_results = clusterCalculator(data_all[,!nan_col], 
+                                    distance_method, 
+                                    cut_tree, 
+                                    random_sets, 
+                                    iterations)
+
+## Internal Metrics
+distance = dist(select(data_all, -class))
+cluster_res = select(cluster_results, c("hca", "kmeans", "pam"))
+internal_metrics = sapply(cluster_res, function(x) cluster.stats(distance, 
+                                                                 clustering = x, 
+                                                                 silhouette = TRUE))
+all_internal_metrics_df = as.data.frame(internal_metrics)
+internal_metrics_df = all_internal_metrics_df[c("dunn","average.between","average.within"),]
+
+## External Metrics
+t_hca = table(cluster_results$class, cluster_results$hca)
+t_kmeans = table(cluster_results$class, cluster_results$kmeans)
+t_pam = table(cluster_results$class, cluster_results$pam)
+
+aligned_matr_hca = maxDiag(t_hca)
+aligned_matr_kmeans = maxDiag(t_kmeans)
+aligned_matr_pam = maxDiag(t_pam)
+
+hca_ext_metric = metricCal(aligned_matr_hca)
+kmeans_ext_metric = metricCal(aligned_matr_kmeans)
+pam_ext_metric = metricCal(aligned_matr_pam)
+all_ext_metric = rbind(hca_ext_metric, kmeans_ext_metric, pam_ext_metric)
+# results order: "hca", "kmeans", "pam"
+all_ext_metric_df = as.data.frame(all_ext_metric)
+
+# Write to csv for report
+#write.xlsx(internal_metrics_df, file = inter_excel_name, sheetName = "internal_metrics_df", append = TRUE)
+#write.xlsx(all_ext_metric_df, file = ext_excel_name, sheetName = "all_ext_metric_df", append = TRUE)
+```
+
